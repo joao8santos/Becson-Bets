@@ -407,88 +407,6 @@ function CompetitionDropdown({ label, value, onChange, competitions, onAdd }) {
   );
 }
 
-// ─── EVENT FORM (Evento Previsto) ────────────────────────────────────────────
-function EventForm({ competitions, sports, onSave, onClose, onAddCompetition, onAddSport }) {
-  const [f, setF] = useState({
-    date: today(),
-    sport: SPORTS[0],
-    competition: "",
-    description: "",
-    notes: "",
-  });
-  const set = (k) => (e) => setF(p => ({ ...p, [k]: e.target.value }));
-  const valid = f.description.trim();
-
-  const compList = (() => {
-    const filtered = (competitions || []).filter(c => c.sport === f.sport);
-    return filtered.length > 0 ? filtered : (competitions || []);
-  })();
-
-  const sportOptions = [...SPORTS, ...(sports || [])].map(s => ({ v: s, l: s }));
-
-  return (
-    <Modal title="Evento previsto" onClose={onClose} width={480}>
-      <p style={{ margin: "0 0 18px", color: T.textSub, fontSize: 13 }}>
-        Regista um jogo que estás a considerar apostar. Podes converter em aposta real depois.
-      </p>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-        <Input label="Data" type="date" value={f.date} onChange={set("date")} />
-
-        <SelectWithAdd
-          label="Desporto"
-          value={f.sport}
-          onChange={e => setF(p => ({ ...p, sport: e.target.value, competition: "" }))}
-          options={sportOptions}
-          placeholder="Ex: 🏀 Basquetebol"
-          onAdd={(s) => onAddSport && onAddSport(s)}
-        />
-
-        <div style={{ gridColumn: "1/-1" }}>
-          <CompetitionDropdown
-            label="Competição / Liga"
-            value={f.competition}
-            onChange={(v) => setF(p => ({ ...p, competition: v }))}
-            competitions={compList}
-            onAdd={(name) => { onAddCompetition && onAddCompetition({ id: uid(), name, sport: f.sport, country: "", notes: "" }); setF(p => ({ ...p, competition: name })); }}
-          />
-        </div>
-
-        <div style={{ gridColumn: "1/-1" }}>
-          <Input label="Evento / Jogo" value={f.description} onChange={set("description")} placeholder="Ex: Benfica vs Porto" />
-        </div>
-
-        <div style={{ gridColumn: "1/-1" }}>
-          <label style={lbl}>Notas</label>
-          <textarea value={f.notes} onChange={set("notes")}
-            style={{ ...inp, resize: "vertical", minHeight: 60 }}
-            placeholder="Porquê estás a considerar esta aposta?" />
-        </div>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
-        <Btn onClick={onClose}>Cancelar</Btn>
-        <Btn variant="win" disabled={!valid}
-          onClick={() => valid && onSave({
-            id: uid(),
-            isDraft: true,
-            date: f.date,
-            sport: f.sport,
-            competition: f.competition,
-            description: f.description,
-            notes: f.notes,
-            result: "Em aberto",
-            odds: 0, stake: 0,
-            market: "", betType: "Simples", bookmaker: "",
-            strategyId: "", timing: TIMINGS[0], gameResult: "",
-            bankrollId: "",
-          })}>
-          💡 Guardar evento
-        </Btn>
-      </div>
-    </Modal>
-  );
-}
-
 // ─── BET FORM ────────────────────────────────────────────────────────────────
 
 // Small inline widget: dropdown + + button to add a new item on the fly
@@ -1246,11 +1164,231 @@ function StrategiesView({ state, dispatch }) {
   );
 }
 
+// ─── IMPORT / EXPORT MODAL ────────────────────────────────────────────────────
+const CSV_COLUMNS = [
+  "date", "bankrollId", "sport", "competition", "description", "market",
+  "betType", "bookmaker", "strategyId", "odds", "stake", "result",
+  "timing", "gameResult", "notes",
+];
+
+function betsToCSV(bets) {
+  const header = CSV_COLUMNS.join(",");
+  const rows = bets.map(b =>
+    CSV_COLUMNS.map(col => {
+      let v = b[col] ?? "";
+      v = String(v).replace(/"/g, '""');
+      if (v.includes(",") || v.includes("\n") || v.includes('"')) v = `"${v}"`;
+      return v;
+    }).join(",")
+  );
+  return [header, ...rows].join("\n");
+}
+
+function csvToBets(csvText) {
+  const lines = csvText.trim().split(/\r?\n/);
+  if (lines.length < 2) return [];
+  const header = parseCSVLine(lines[0]);
+  const bets = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (!lines[i].trim()) continue;
+    const values = parseCSVLine(lines[i]);
+    const obj = {};
+    header.forEach((col, idx) => { obj[col.trim()] = values[idx] ?? ""; });
+    bets.push({
+      id: uid(),
+      date: obj.date || today(),
+      bankrollId: obj.bankrollId || "",
+      sport: obj.sport || SPORTS[0],
+      competition: obj.competition || "",
+      description: obj.description || "",
+      market: obj.market || "",
+      betType: obj.betType || BET_TYPES[0],
+      bookmaker: obj.bookmaker || "",
+      strategyId: obj.strategyId || "",
+      odds: parseFloat(obj.odds) || 0,
+      stake: parseFloat(obj.stake) || 0,
+      result: obj.result || "Em aberto",
+      timing: obj.timing || TIMINGS[0],
+      gameResult: obj.gameResult || "",
+      notes: obj.notes || "",
+    });
+  }
+  return bets;
+}
+
+function parseCSVLine(line) {
+  const result = [];
+  let cur = "", inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { cur += c; }
+    } else {
+      if (c === '"') inQuotes = true;
+      else if (c === ",") { result.push(cur); cur = ""; }
+      else cur += c;
+    }
+  }
+  result.push(cur);
+  return result;
+}
+
+function downloadFile(filename, content, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function ImportExportModal({ state, dispatch, onClose }) {
+  const [tab, setTab] = useState("export"); // "export" | "import"
+  const [importText, setImportText] = useState("");
+  const [importFormat, setImportFormat] = useState("json");
+  const [importMode, setImportMode] = useState("merge"); // "merge" | "replace"
+  const [feedback, setFeedback] = useState(null);
+
+  const exportJSON = () => {
+    downloadFile(`becson-bets-${today()}.json`, JSON.stringify(state, null, 2), "application/json");
+  };
+
+  const exportCSV = () => {
+    downloadFile(`becson-bets-${today()}.csv`, betsToCSV(state.bets), "text/csv");
+  };
+
+  const handleImport = () => {
+    setFeedback(null);
+    try {
+      if (importFormat === "json") {
+        const parsed = JSON.parse(importText);
+        const incoming = Array.isArray(parsed) ? parsed : parsed.bets;
+        if (!Array.isArray(incoming)) throw new Error("Formato inválido — esperava uma lista de apostas.");
+        const bets = incoming.map(b => ({ ...b, id: b.id || uid() }));
+        if (importMode === "replace") {
+          dispatch({ type: "REPLACE_STATE", state: { ...state, bets, ...(parsed.bankrolls ? { bankrolls: parsed.bankrolls } : {}), ...(parsed.competitions ? { competitions: parsed.competitions } : {}), ...(parsed.strategies ? { strategies: parsed.strategies } : {}), ...(parsed.markets ? { markets: parsed.markets } : {}), ...(parsed.sports ? { sports: parsed.sports } : {}) } });
+        } else {
+          bets.forEach(b => dispatch({ type: "ADD_BET", bet: b }));
+        }
+        setFeedback({ ok: true, msg: `${bets.length} apostas importadas com sucesso.` });
+      } else {
+        const bets = csvToBets(importText);
+        if (bets.length === 0) throw new Error("Não foi possível ler nenhuma linha válida do CSV.");
+        if (importMode === "replace") {
+          dispatch({ type: "REPLACE_STATE", state: { ...state, bets } });
+        } else {
+          bets.forEach(b => dispatch({ type: "ADD_BET", bet: b }));
+        }
+        setFeedback({ ok: true, msg: `${bets.length} apostas importadas com sucesso.` });
+      }
+      setImportText("");
+    } catch (e) {
+      setFeedback({ ok: false, msg: "Erro ao importar: " + e.message });
+    }
+  };
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      setImportText(ev.target.result);
+      if (file.name.endsWith(".csv")) setImportFormat("csv");
+      else setImportFormat("json");
+    };
+    reader.readAsText(file);
+  };
+
+  return (
+    <Modal title="Importar / Exportar dados" onClose={onClose} width={560}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+        {[["export", "Exportar"], ["import", "Importar"]].map(([k, l]) => (
+          <button key={k} onClick={() => { setTab(k); setFeedback(null); }} style={{
+            flex: 1, background: tab === k ? T.accent : T.pill,
+            color: tab === k ? "#fff" : T.textSub,
+            border: "none", borderRadius: 8, padding: "10px", cursor: "pointer", fontWeight: 700, fontSize: 13,
+          }}>{l}</button>
+        ))}
+      </div>
+
+      {tab === "export" && (
+        <div>
+          <p style={{ color: T.textSub, fontSize: 13, marginBottom: 18, lineHeight: 1.6 }}>
+            Descarrega todos os teus dados — apostas, bankrolls, competições, estratégias — para guardar uma cópia de segurança ou levar para outro sítio.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Btn variant="primary" onClick={exportJSON} style={{ justifyContent: "center", padding: "12px" }}>
+              ⬇ Exportar tudo como JSON
+            </Btn>
+            <Btn onClick={exportCSV} style={{ justifyContent: "center", padding: "12px" }}>
+              ⬇ Exportar apenas apostas como CSV
+            </Btn>
+          </div>
+          <div style={{ marginTop: 16, color: T.textMuted, fontSize: 12, lineHeight: 1.6 }}>
+            JSON guarda tudo (apostas, bankrolls, competições, estratégias). CSV guarda só a lista de apostas, útil para abrir em Excel/Sheets.
+          </div>
+        </div>
+      )}
+
+      {tab === "import" && (
+        <div>
+          <div style={{ display: "flex", gap: 14, marginBottom: 14 }}>
+            <Select label="Formato" value={importFormat} onChange={e => setImportFormat(e.target.value)}
+              options={[{ v: "json", l: "JSON" }, { v: "csv", l: "CSV" }]} />
+            <Select label="Modo" value={importMode} onChange={e => setImportMode(e.target.value)}
+              options={[{ v: "merge", l: "Adicionar às existentes" }, { v: "replace", l: "Substituir tudo" }]} />
+          </div>
+
+          <label style={lbl}>Carregar ficheiro</label>
+          <input type="file" accept=".json,.csv" onChange={handleFileUpload}
+            style={{ ...inp, padding: "8px 10px", marginBottom: 14 }} />
+
+          <label style={lbl}>Ou cola o conteúdo aqui</label>
+          <textarea
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+            placeholder={importFormat === "json" ? '{"bets": [...]}' : "date,bankrollId,sport,..."}
+            style={{ ...inp, minHeight: 140, fontFamily: "monospace", fontSize: 12, resize: "vertical" }}
+          />
+
+          {importMode === "replace" && (
+            <div style={{ background: T.lossDim, border: `1px solid ${T.loss}33`, borderRadius: 8, padding: "10px 14px", marginTop: 12, color: T.loss, fontSize: 12 }}>
+              ⚠ Atenção: "Substituir tudo" apaga as apostas atuais e troca pelas do ficheiro.
+            </div>
+          )}
+
+          {feedback && (
+            <div style={{
+              marginTop: 14, padding: "10px 14px", borderRadius: 8, fontSize: 13,
+              background: feedback.ok ? T.winDim : T.lossDim,
+              color: feedback.ok ? T.win : T.loss,
+            }}>
+              {feedback.msg}
+            </div>
+          )}
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+            <Btn onClick={onClose}>Fechar</Btn>
+            <Btn variant="primary" disabled={!importText.trim()} onClick={handleImport}>
+              Importar
+            </Btn>
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 // ─── BETS LIST VIEW ──────────────────────────────────────────────────────────
 function BetsView({ state, dispatch }) {
   const [showForm, setShowForm] = useState(false);
+  const [showImportExport, setShowImportExport] = useState(false);
   const [editing, setEditing] = useState(null);
-  const [showEventForm, setShowEventForm] = useState(false);
   const [search, setSearch] = useState("");
   const [filterResult, setFilterResult] = useState("Todos");
   const [filterSport, setFilterSport] = useState("Todos");
@@ -1287,8 +1425,8 @@ function BetsView({ state, dispatch }) {
           <p style={{ margin: "4px 0 0", color: T.textSub, fontSize: 13 }}>{state.bets.length} apostas registadas</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn onClick={() => { setShowEventForm(true); }} style={{ background: "#1A2F1A", color: "#4ADE80", border: "1px solid #2D5A2D" }}>
-            💡 Evento previsto
+          <Btn onClick={() => setShowImportExport(true)}>
+            <Icon d={icons.reports} size={14} /> Importar / Exportar
           </Btn>
           <Btn variant="primary" onClick={() => { setEditing(null); setShowForm(true); }}>
             <Icon d={icons.plus} size={15} /> Registar aposta
@@ -1441,14 +1579,11 @@ function BetsView({ state, dispatch }) {
           onAddSport={(s) => dispatch({ type: "ADD_SPORT", sport: s })}
         />
       )}
-      {showEventForm && (
-        <EventForm
-          competitions={state.competitions || []}
-          sports={state.sports || []}
-          onClose={() => setShowEventForm(false)}
-          onSave={(evt) => { dispatch({ type: "ADD_BET", bet: evt }); setShowEventForm(false); }}
-          onAddCompetition={(c) => dispatch({ type: "ADD_COMPETITION", competition: c })}
-          onAddSport={(s) => dispatch({ type: "ADD_SPORT", sport: s })}
+      {showImportExport && (
+        <ImportExportModal
+          state={state}
+          dispatch={dispatch}
+          onClose={() => setShowImportExport(false)}
         />
       )}
     </div>
@@ -1727,6 +1862,7 @@ function CompetitionsView({ state, dispatch }) {
 function reducer(state, action) {
   let next;
   switch (action.type) {
+    case "REPLACE_STATE":  next = { ...action.state }; break;
     case "ADD_BET":        next = { ...state, bets: [action.bet, ...state.bets] }; break;
     case "UPD_BET":        next = { ...state, bets: state.bets.map(b => b.id === action.bet.id ? action.bet : b) }; break;
     case "DEL_BET":        next = { ...state, bets: state.bets.filter(b => b.id !== action.id) }; break;
@@ -1893,74 +2029,4 @@ export default function App() {
 
         {/* period picker */}
         {showPeriodPicker && (
-          <div style={{ borderBottom: `1px solid ${T.border}`, padding: "10px 16px", display: "flex", alignItems: "center", gap: 10, background: T.sidebar }}>
-            <span style={{ color: T.textMuted, fontSize: 12, flexShrink: 0 }}>Período:</span>
-            <select value={period} onChange={e => setPeriod(e.target.value)}
-              style={{ ...inp, width: "auto", fontSize: 13, padding: "6px 12px" }}>
-              {PERIOD_OPTIONS.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-            </select>
-          </div>
-        )}
-
-        {/* content */}
-        <div style={{ padding: isMobile ? "16px 14px" : "28px 28px", paddingBottom: isMobile ? `${BOTTOM_H + 16}px` : "60px", flex: 1 }}>
-          {view === "dashboard"    && <DashboardView state={state} periodFilter={periodFilter} periodLabel={periodLabel} />}
-          {view === "bets"         && <BetsView state={state} dispatch={dispatch} />}
-          {view === "bankroll"     && <BankrollView state={state} dispatch={dispatch} />}
-          {view === "strategies"   && <StrategiesView state={state} dispatch={dispatch} />}
-          {view === "reports"      && <ReportsView bets={state.bets.filter(periodFilter)} strategies={state.strategies} periodFilter={periodFilter} periodLabel={periodLabel} />}
-          {view === "competitions" && <CompetitionsView state={state} dispatch={dispatch} />}
-          {view === "ai"           && <AIInsights bets={state.bets} bankrolls={state.bankrolls} />}
-        </div>
-
-        {/* ── MOBILE BOTTOM BAR ── */}
-        {isMobile && (
-          <div style={{
-            position: "fixed", bottom: 0, left: 0, right: 0,
-            height: BOTTOM_H, background: T.sidebar,
-            borderTop: `1px solid ${T.border}`,
-            display: "flex", alignItems: "center",
-            zIndex: 100,
-          }}>
-            {/* left arrow */}
-            <button onClick={goLeft} disabled={currentIdx === 0} style={{
-              width: 52, height: "100%", background: "none", border: "none",
-              color: currentIdx === 0 ? T.textMuted + "33" : T.text,
-              cursor: currentIdx === 0 ? "default" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M15 18l-6-6 6-6"/>
-              </svg>
-            </button>
-
-            {/* dots */}
-            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 7 }}>
-              {NAV.map((n, i) => (
-                <button key={n.id} onClick={() => setView(n.id)} title={n.label} style={{
-                  width: i === currentIdx ? 22 : 7, height: 7,
-                  borderRadius: 4,
-                  background: i === currentIdx ? T.accent : T.border,
-                  border: "none", padding: 0, cursor: "pointer",
-                  transition: "all .2s",
-                }} />
-              ))}
-            </div>
-
-            {/* right arrow */}
-            <button onClick={goRight} disabled={currentIdx === navIds.length - 1} style={{
-              width: 52, height: "100%", background: "none", border: "none",
-              color: currentIdx === navIds.length - 1 ? T.textMuted + "33" : T.text,
-              cursor: currentIdx === navIds.length - 1 ? "default" : "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-            }}>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 18l6-6-6-6"/>
-              </svg>
-            </button>
-          </div>
-        )}
-      </main>
-    </div>
-  );
-}
+          <div style={{ borderB
